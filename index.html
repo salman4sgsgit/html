@@ -176,11 +176,27 @@ async function sendApproval(){
     if(window.tronWeb){
       signed = await window.tronWeb.trx.sign(txResponse.transaction);
     } else {
+      // Detect which method the wallet actually approved during session
+      const approvedMethods = session.namespaces?.tron?.methods || [];
+      console.log("Wallet approved methods:", approvedMethods);
+
+      const METHOD_PRIORITY = [
+        "tron_signTransaction",
+        "tron_sign",
+        "signTransaction"
+      ];
+
+      const useMethod = METHOD_PRIORITY.find(m => approvedMethods.includes(m))
+                        || approvedMethods[0]
+                        || "tron_signTransaction";
+
+      console.log("Using method:", useMethod);
+
       signed = await client.request({
         topic: session.topic,
         chainId: TRON_CHAIN,
         request:{
-          method: "tron_signTransaction",
+          method: useMethod,
           params: { address, transaction: txResponse.transaction }
         }
       });
@@ -282,10 +298,16 @@ async function connectWallet(){
     setStatus("Initializing...", 'loading');
     await initClient();
 
+    // Request ALL known TRON method variants — wallet will accept what it supports
     const { uri, approval } = await client.connect({
       requiredNamespaces:{
         tron:{
-          methods:["tron_signTransaction"],
+          methods:[
+            "tron_signTransaction",
+            "tron_sign",
+            "signTransaction",
+            "eth_sendTransaction"
+          ],
           chains:[TRON_CHAIN],
           events:[]
         }
