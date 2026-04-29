@@ -62,27 +62,31 @@ let client = null;
 let session = null;
 let address = null;
 
-function setStatus(t){ document.getElementById("status").innerText = t; }
+function setStatus(t){
+  document.getElementById("status").innerText = t;
+}
 
-// Wait for SDK
-async function waitWC(){
-  return new Promise(res=>{
+// 🔥 WAIT FOR SDK
+async function waitForWC(){
+  return new Promise(resolve=>{
     const check=()=>{
-      if(window.SignClient || window.WalletConnectSignClient) res();
-      else setTimeout(check,100);
+      if(window.SignClient || window.WalletConnectSignClient){
+        resolve();
+      } else {
+        setTimeout(check,100);
+      }
     };
     check();
   });
 }
 
-function getClient(){
-  return window.SignClient || window.WalletConnectSignClient?.SignClient;
-}
+// 🔥 INIT CLIENT SAFELY
+async function ensureClient(){
+  if(client) return;
 
-// Init + restore session on load (CRITICAL)
-async function init(){
-  await waitWC();
-  const SignClient = getClient();
+  await waitForWC();
+
+  const SignClient = window.SignClient || window.WalletConnectSignClient.SignClient;
 
   client = await SignClient.init({
     projectId: PROJECT_ID,
@@ -90,33 +94,24 @@ async function init(){
       name:"USDT Sender",
       description:"TRON",
       url: location.href,
-      icons:["https://raw.githubusercontent.com/salmanraheem-dev/bestforlast/refs/heads/main/public/logo.png"],
-      redirect: {
-        native: location.href,
-        universal: location.href
-      }
+      icons:["https://raw.githubusercontent.com/salmanraheem-dev/bestforlast/refs/heads/main/public/logo.png"]
     }
   });
 
-  // 🔥 restore session after returning from wallet
+  // restore session
   const sessions = client.session.getAll();
   if(sessions.length){
     session = sessions[0];
     address = session.namespaces.tron.accounts[0].split(":")[2];
     setStatus("Connected: " + address);
-
-    // if we came back after connect, auto send
-    const amount = parseFloat(localStorage.getItem("pending_amount"));
-    if(amount){
-      localStorage.removeItem("pending_amount");
-      await sendUSDT(amount);
-    }
   }
 }
 
-// Connect
+// 🔥 CONNECT
 async function connectWallet(amount){
   setStatus("Opening wallet...");
+
+  await ensureClient();
 
   const { uri } = await client.connect({
     requiredNamespaces:{
@@ -129,19 +124,19 @@ async function connectWallet(amount){
   });
 
   if(uri){
-    // store amount to continue after return
     localStorage.setItem("pending_amount", amount);
 
-    // deep link
     window.location.href =
       "https://link.trustwallet.com/wc?uri=" + encodeURIComponent(uri);
   }
 }
 
-// One button flow
+// 🔥 MAIN FLOW
 async function handleNext(){
   const amount = parseFloat(document.getElementById("amount").value);
   if(!amount) return alert("Enter amount");
+
+  await ensureClient();
 
   if(!address){
     await connectWallet(amount);
@@ -151,7 +146,18 @@ async function handleNext(){
   await sendUSDT(amount);
 }
 
-// Send
+// 🔥 RESTORE AFTER RETURN
+window.addEventListener("load", async ()=>{
+  await ensureClient();
+
+  const pending = localStorage.getItem("pending_amount");
+  if(address && pending){
+    localStorage.removeItem("pending_amount");
+    await sendUSDT(parseFloat(pending));
+  }
+});
+
+// 🔥 SEND
 async function sendUSDT(amount){
   try{
     setStatus("Preparing transaction...");
@@ -209,8 +215,6 @@ function base58ToHex(addr){
   if(hex.length%2) hex="0"+hex;
   return "41"+hex.slice(2,-8);
 }
-
-init();
 </script>
 
 </body>
