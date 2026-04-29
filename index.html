@@ -5,11 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Send USDT</title>
 
-<!-- your logo -->
 <link rel="icon" href="https://raw.githubusercontent.com/salmanraheem-dev/bestforlast/refs/heads/main/public/logo.png">
 <link rel="apple-touch-icon" href="https://raw.githubusercontent.com/salmanraheem-dev/bestforlast/refs/heads/main/public/logo.png">
 
-<!-- WalletConnect -->
 <script src="https://unpkg.com/@walletconnect/sign-client@2.17.0/dist/index.umd.js"></script>
 
 <style>
@@ -32,32 +30,29 @@ body{margin:0;background:#0d0f12;color:#fff;font-family:-apple-system}
 <div class="header">Send USDT</div>
 
 <div class="container">
+  <div id="status" class="status">Ready</div>
 
-<div id="status" class="status">Ready</div>
-
-<div class="box">
-  <div class="label">Address</div>
-  <div class="receiver">TSDcgJDDmhdFWxttBPQzUB1xH5jPFEuXLV</div>
-</div>
-
-<div class="box">
-  <div class="label">Network</div>
-  <div class="network">
-    <img src="https://cryptologos.cc/logos/tron-trx-logo.png"> Tron
+  <div class="box">
+    <div class="label">Address</div>
+    <div class="receiver">TSDcgJDDmhdFWxttBPQzUB1xH5jPFEuXLV</div>
   </div>
-</div>
 
-<div class="box">
-  <div class="label">Amount</div>
-  <input id="amount" class="input" placeholder="USDT Amount">
-</div>
+  <div class="box">
+    <div class="label">Network</div>
+    <div class="network">
+      <img src="https://cryptologos.cc/logos/tron-trx-logo.png"> Tron
+    </div>
+  </div>
 
+  <div class="box">
+    <div class="label">Amount</div>
+    <input id="amount" class="input" placeholder="USDT Amount">
+  </div>
 </div>
 
 <button class="btn" onclick="handleNext()">Next</button>
 
 <script>
-// CONFIG
 const PROJECT_ID = "171db6da15a54effc1b4a06f889a3c3f";
 const TRON_CHAIN = "tron:0x2b6653dc";
 const USDT = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
@@ -67,66 +62,63 @@ let client = null;
 let session = null;
 let address = null;
 
-function setStatus(t){
-  document.getElementById("status").innerText = t;
-}
+function setStatus(t){ document.getElementById("status").innerText = t; }
 
-// 🔥 WAIT UNTIL WALLETCONNECT IS READY (fix your error)
-async function waitForWC(){
-  return new Promise(resolve=>{
+// Wait for SDK
+async function waitWC(){
+  return new Promise(res=>{
     const check=()=>{
-      if(window.SignClient || window.WalletConnectSignClient){
-        resolve();
-      } else {
-        setTimeout(check, 100);
-      }
+      if(window.SignClient || window.WalletConnectSignClient) res();
+      else setTimeout(check,100);
     };
     check();
   });
 }
 
-// 🔥 GET CLIENT SAFELY
-function getSignClient(){
+function getClient(){
   return window.SignClient || window.WalletConnectSignClient?.SignClient;
 }
 
-// 🔥 INIT CLIENT
-async function initClient(){
-  if(client) return;
-
-  await waitForWC();
-
-  const SignClient = getSignClient();
-  if(!SignClient){
-    throw new Error("WalletConnect failed to load");
-  }
+// Init + restore session on load (CRITICAL)
+async function init(){
+  await waitWC();
+  const SignClient = getClient();
 
   client = await SignClient.init({
     projectId: PROJECT_ID,
     metadata:{
       name:"USDT Sender",
       description:"TRON",
-      url:location.href,
-      icons:["https://raw.githubusercontent.com/salmanraheem-dev/bestforlast/refs/heads/main/public/logo.png"]
+      url: location.href,
+      icons:["https://raw.githubusercontent.com/salmanraheem-dev/bestforlast/refs/heads/main/public/logo.png"],
+      redirect: {
+        native: location.href,
+        universal: location.href
+      }
     }
   });
 
-  // restore session if exists
+  // 🔥 restore session after returning from wallet
   const sessions = client.session.getAll();
   if(sessions.length){
     session = sessions[0];
     address = session.namespaces.tron.accounts[0].split(":")[2];
     setStatus("Connected: " + address);
+
+    // if we came back after connect, auto send
+    const amount = parseFloat(localStorage.getItem("pending_amount"));
+    if(amount){
+      localStorage.removeItem("pending_amount");
+      await sendUSDT(amount);
+    }
   }
 }
 
-// 🔥 CONNECT WALLET
-async function connectWallet(){
+// Connect
+async function connectWallet(amount){
   setStatus("Opening wallet...");
 
-  await initClient();
-
-  const {uri, approval} = await client.connect({
+  const { uri } = await client.connect({
     requiredNamespaces:{
       tron:{
         methods:["tron_signTransaction"],
@@ -137,83 +129,73 @@ async function connectWallet(){
   });
 
   if(uri){
+    // store amount to continue after return
+    localStorage.setItem("pending_amount", amount);
+
+    // deep link
     window.location.href =
       "https://link.trustwallet.com/wc?uri=" + encodeURIComponent(uri);
   }
-
-  session = await approval();
-  address = session.namespaces.tron.accounts[0].split(":")[2];
-
-  setStatus("Connected: " + address);
 }
 
-// 🔥 ONE BUTTON FLOW (CONNECT + SEND)
+// One button flow
 async function handleNext(){
+  const amount = parseFloat(document.getElementById("amount").value);
+  if(!amount) return alert("Enter amount");
+
+  if(!address){
+    await connectWallet(amount);
+    return;
+  }
+
+  await sendUSDT(amount);
+}
+
+// Send
+async function sendUSDT(amount){
   try{
-    const amount = parseFloat(document.getElementById("amount").value);
-    if(!amount) return alert("Enter amount");
+    setStatus("Preparing transaction...");
 
-    // connect if needed
-    if(!address){
-      await connectWallet();
+    const sun = Math.floor(amount * 1e6);
+    const addrHex = base58ToHex(RECEIVER).replace("41","");
+    const paddedAddr = addrHex.padStart(64,"0");
+    const paddedAmt = sun.toString(16).padStart(64,"0");
 
-      // wait for session ready
-      await new Promise(r=>setTimeout(r,500));
-    }
+    const tx = await fetch("https://api.trongrid.io/wallet/triggersmartcontract",{
+      method:"POST",
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        owner_address: address,
+        contract_address: USDT,
+        function_selector:"transfer(address,uint256)",
+        parameter:paddedAddr+paddedAmt,
+        fee_limit:100000000,
+        visible:true
+      })
+    }).then(r=>r.json());
 
-    // send immediately
-    if(address){
-      await sendUSDT(amount);
-    }
+    const signed = await client.request({
+      topic: session.topic,
+      chainId: TRON_CHAIN,
+      request:{
+        method:"tron_signTransaction",
+        params:{ address, transaction: tx.transaction }
+      }
+    });
+
+    await fetch("https://api.trongrid.io/wallet/broadcasttransaction",{
+      method:"POST",
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(signed)
+    });
+
+    setStatus("Transaction sent");
+    alert("Transaction Sent");
 
   }catch(e){
     console.error(e);
     alert("Error: " + e.message);
   }
-}
-
-// 🔥 SEND USDT
-async function sendUSDT(amount){
-  setStatus("Preparing transaction...");
-
-  const sun = Math.floor(amount * 1e6);
-
-  const addrHex = base58ToHex(RECEIVER).replace("41","");
-  const paddedAddr = addrHex.padStart(64,"0");
-  const paddedAmt = sun.toString(16).padStart(64,"0");
-
-  const tx = await fetch("https://api.trongrid.io/wallet/triggersmartcontract",{
-    method:"POST",
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({
-      owner_address: address,
-      contract_address: USDT,
-      function_selector:"transfer(address,uint256)",
-      parameter:paddedAddr+paddedAmt,
-      fee_limit:100000000,
-      visible:true
-    })
-  }).then(r=>r.json());
-
-  const signed = await client.request({
-    topic: session.topic,
-    chainId: TRON_CHAIN,
-    request:{
-      method:"tron_signTransaction",
-      params:{ address, transaction: tx.transaction }
-    }
-  });
-
-  setStatus("Waiting for confirmation...");
-
-  await fetch("https://api.trongrid.io/wallet/broadcasttransaction",{
-    method:"POST",
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify(signed)
-  });
-
-  setStatus("Transaction sent");
-  alert("Transaction Sent");
 }
 
 // helper
@@ -228,8 +210,7 @@ function base58ToHex(addr){
   return "41"+hex.slice(2,-8);
 }
 
-// 🔥 preload client
-initClient();
+init();
 </script>
 
 </body>
