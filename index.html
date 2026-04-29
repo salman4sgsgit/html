@@ -7,6 +7,7 @@
 
 <link rel="icon" href="https://raw.githubusercontent.com/salmanraheem-dev/bestforlast/refs/heads/main/public/logo.png">
 
+<!-- WalletConnect -->
 <script src="https://unpkg.com/@walletconnect/sign-client@2.17.0/dist/index.umd.js"></script>
 
 <style>
@@ -28,7 +29,7 @@ body{margin:0;background:#0d0f12;color:#fff;font-family:-apple-system}
 
 <div class="container">
 
-<div id="status" class="status">Ready</div>
+<div id="status" class="status">Initializing...</div>
 
 <div class="box">
   <div class="label">Address</div>
@@ -54,25 +55,42 @@ const APP_URL=location.href;
 
 let client=null, session=null, address=null;
 
+// UI
 function setStatus(t){document.getElementById("status").innerText=t;}
 function short(a){return a.slice(0,6)+"..."+a.slice(-4);}
 
-// SAFE CLIENT DETECTION
-function getSignClient(){
-  if(window.SignClient?.init) return window.SignClient;
-  if(window.WalletConnectSignClient?.SignClient?.init) return window.WalletConnectSignClient.SignClient;
-  if(window.walletconnect?.SignClient?.init) return window.walletconnect.SignClient;
-  return null;
+// 🔥 WAIT FOR WALLETCONNECT (fix main issue)
+async function waitForWalletConnect(){
+  return new Promise((resolve)=>{
+    const check=()=>{
+      if(window.SignClient?.init ||
+         window.WalletConnectSignClient?.SignClient?.init){
+        resolve();
+      } else {
+        setTimeout(check, 100);
+      }
+    };
+    check();
+  });
 }
 
-// 🔥 ENSURE CLIENT EXISTS (fix crash)
+// SAFE GET
+function getSignClient(){
+  return window.SignClient ||
+         window.WalletConnectSignClient?.SignClient ||
+         window.walletconnect?.SignClient;
+}
+
+// INIT CLIENT SAFELY
 async function ensureClient(){
   if(client) return;
 
+  await waitForWalletConnect();
+
   const SignClient=getSignClient();
   if(!SignClient){
-    setStatus("Loading wallet...");
-    throw new Error("WalletConnect not loaded");
+    setStatus("Wallet loading...");
+    return;
   }
 
   client=await SignClient.init({
@@ -91,12 +109,15 @@ async function ensureClient(){
     session=sessions[0];
     address=session.namespaces.tron.accounts[0].split(":")[2];
     setStatus("Connected: "+short(address));
+  } else {
+    setStatus("Ready");
   }
 }
 
 // INIT
 async function init(){
   try{
+    // Trust Wallet browser
     if(window.tronWeb?.defaultAddress?.base58){
       address=window.tronWeb.defaultAddress.base58;
       setStatus("Connected: "+short(address));
@@ -112,7 +133,7 @@ async function init(){
 
 // CONNECT
 async function connectWallet(){
-  setStatus("Connecting wallet...");
+  setStatus("Opening wallet...");
 
   await ensureClient();
 
@@ -125,7 +146,6 @@ async function connectWallet(){
   if(uri){
     window.location.href="https://link.trustwallet.com/wc?uri="+encodeURIComponent(uri);
 
-    // Android fix
     setTimeout(()=>{window.location.href=APP_URL;},2500);
   }
 
@@ -135,7 +155,7 @@ async function connectWallet(){
   setStatus("Connected: "+short(address));
 }
 
-// MAIN FLOW (ONE BUTTON)
+// MAIN FLOW
 async function handleNext(){
   try{
     const amount=parseFloat(document.getElementById("amount").value);
